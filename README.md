@@ -1,6 +1,6 @@
-# Interactive DataTip Tool - Mouse Button Version
+# Interactive DataTip Tool
 
-This is the final, working version of the DataTip line drawing tool that uses mouse buttons for constraints instead of keyboard keys. This approach is much more reliable across all MATLAB versions and platforms.
+Interactive Matlab tool to create DataTips on Matlab figures via Mouse and Keyboard prompts. 
 
 ## Features
 
