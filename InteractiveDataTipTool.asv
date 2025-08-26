@@ -1,0 +1,433 @@
+classdef InteractiveDataTipTool < handle
+    % InteractiveDataTipTool
+    % ---------------------------------------------------------------
+    % Draw a line (left=free, right=horizontal, middle=vertical, Ctrl=x-axis).
+    % Intersections create native MATLAB datatips (we snap them to the nearest
+    % vertex so the table values match the labels).
+    %
+    % The standalone Aligner window (table only) has columns:
+    %   Signal Name | X | (X☑) | Y | (Y☑)
+    %
+    % Click an X checkbox in one row, then click X in another row:
+    %   - The FIRST clicked row's curve moves so its X matches the second.
+    % Same for Y. If both rows are on the SAME curve, nothing happens.
+    %
+    % ESC cancels an in-progress line. Drawing is ignored while
+    % Zoom/Pan/Rotate/DataCursor/Brush are active.
+    % ---------------------------------------------------------------
+
+    properties
+        Ax
+        Fig
+        Enable = false
+
+        % preview line state
+        PreviewLine = []
+        IsDown = false
+        StartPoint = [NaN NaN]
+        ConstraintMode = 'free'   % 'free'|'horizontal'|'vertical'|'x-axis'
+
+        % our tips (snapped to vertices)
+        % struct('hLine',h,'lineName',str,'idx',k,'x',val,'y',val,'hDT',hdt)
+        Tips = struct('hLine',{},'lineName',{},'idx',{},'x',{},'y',{},'hDT',{})
+
+        % GUI
+        GUIFig
+        UITable
+
+        % pending table selections (row numbers; first=mover)
+        PendingXRow = []
+        PendingYRow = []
+    end
+
+    methods
+        function obj = InteractiveDataTipTool(ax)
+            obj.Ax  = ax;
+            obj.Fig = ancestor(ax,'figure');
+            try
+                obj.Fig.SizeChangedFcn = @(~,~)obj.refreshTable();
+            catch
+            end
+        end
+
+        function setEnabled(obj, tf)
+            obj.Enable = logical(tf);
+            if obj.Enable
+                obj.Fig.Pointer               = 'crosshair';
+                obj.Fig.WindowButtonDownFcn   = @(~,~)obj.mouseDown();
+                obj.Fig.WindowButtonMotionFcn = @(~,~)obj.mouseMove();
+                obj.Fig.WindowButtonUpFcn     = @(~,~)obj.mouseUp();
+                obj.Fig.WindowKeyPressFcn     = @(~,evt)obj.keyPress(evt);
+            else
+                obj.Fig.Pointer               = 'arrow';
+                obj.Fig.WindowButtonDownFcn   = [];
+                obj.Fig.WindowButtonMotionFcn = [];
+                obj.Fig.WindowButtonUpFcn     = [];
+                obj.Fig.WindowKeyPressFcn     = [];
+                obj.clearPreview();
+            end
+        end
+
+        function openAligner(obj, varargin)
+            % Accepts: openAligner([x y w h])  OR  openAligner('Position',[...])
+            pos = [120 100 520 300];
+            if ~isempty(varargin) && isnumeric(varargin{1}) && numel(varargin{1})==4
+                pos = varargin{1}; varargin = varargin(2:end);
+            end
+            p = inputParser;
+            addParameter(p,'Position',pos,@(v)isnumeric(v)&&numel(v)==4);
+            parse(p,varargin{:});
+            pos = p.Results.Position;
+
+            if isempty(obj.GUIFig) || ~isgraphics(obj.GUIFig)
+                obj.GUIFig = figure('Name','DataTip Aligner','NumberTitle','off', ...
+                    'MenuBar','none','ToolBar','none','Position',pos, ...
+                    'Color', get(0,'DefaultUicontrolBackgroundColor'));
+            else
+                set(obj.GUIFig,'Position',pos); figure(obj.GUIFig);
+            end
+
+            % Table: Signal Name | X | X☑ | Y | Y☑
+            if isempty(obj.UITable) || ~isgraphics(obj.UITable)
+                obj.UITable = uitable(obj.GUIFig, ...
+                    'Units','normalized','Position',[0.02 0.08 0.96 0.88], ...
+                    'RowName',[], ...                         % no row numbers
+                    'ColumnName', {'Signal Name','X','X□','Y','Y□'}, ...
+                    'ColumnFormat', {'char','numeric','logical','numeric','logical'}, ...
+                    'ColumnEditable',[false false true false true], ...
+                    'CellEditCallback',@(src,evt)obj.onTableEdit(evt));
+            end
+
+            obj.refreshTable();
+        end
+    end
+
+    %% --------------- Input (keys & mouse) ----------------
+    methods (Access=private)
+        function keyPress(obj, evt)
+            if ~isfield(evt,'Key'), return; end
+            if strcmpi(evt.Key,'escape')
+                if obj.IsDown, obj.clearPreview(); obj.IsDown=false; obj.ConstraintMode='free'; end
+            end
+        end
+
+        function mouseDown(obj)
+            if ~obj.Enable, return; end
+            if obj.isFigureModeActive(), return; end
+
+            h = hittest(obj.Fig);
+            % ignore UI clicks (including the aligner window)
+            if ~isempty(h) && (isa(h,'matlab.ui.container.Panel') || isa(h,'matlab.ui.control.UIControl'))
+                return;
+            end
+
+            ax = ancestor(h,'axes');
+            if isempty(ax) || ax ~= obj.Ax, return; end
+
+            % constraint
+            mods = get(obj.Fig,'CurrentModifier'); if ischar(mods), mods = {mods}; end
+            if any(contains(mods,{'control','command'}))
+                obj.ConstraintMode = 'x-axis';
+            else
+                sel = get(obj.Fig,'SelectionType');
+                switch sel
+                    case 'normal', obj.ConstraintMode = 'free';
+                    case 'alt',    obj.ConstraintMode = 'horizontal';
+                    case 'extend', obj.ConstraintMode = 'vertical';
+                    otherwise,     obj.ConstraintMode = 'free';
+                end
+            end
+
+            obj.IsDown     = true;
+            obj.StartPoint = obj.Ax.CurrentPoint(1,1:2);
+
+            obj.clearPreview();
+            obj.PreviewLine = line(obj.Ax,obj.StartPoint(1),obj.StartPoint(2), ...
+                'Color','r','LineStyle','--','LineWidth',3,'Marker','o','MarkerSize',6, ...
+                'HitTest','off','PickableParts','none');
+        end
+
+        function mouseMove(obj)
+            if obj.isFigureModeActive(), return; end
+            if ~obj.Enable || ~obj.IsDown || isempty(obj.PreviewLine), return; end
+            curr = obj.Ax.CurrentPoint(1,1:2);
+            p0 = obj.StartPoint; p1 = curr;
+            switch obj.ConstraintMode
+                case 'horizontal', p1(2) = p0(2);
+                case 'vertical',   p1(1) = p0(1);
+                case 'x-axis',     p1(2) = 0;
+            end
+            set(obj.PreviewLine,'XData',[p0(1) p1(1)],'YData',[p0(2) p1(2)]);
+            drawnow limitrate;
+        end
+
+        function mouseUp(obj)
+            if ~obj.Enable || ~obj.IsDown, return; end
+            if obj.isFigureModeActive()
+                obj.clearPreview(); obj.IsDown=false; obj.ConstraintMode='free'; return;
+            end
+
+            curr = obj.Ax.CurrentPoint(1,1:2);
+            p0 = obj.StartPoint; p1 = curr;
+            switch obj.ConstraintMode
+                case 'horizontal', p1(2) = p0(2);
+                case 'vertical',   p1(1) = p0(1);
+                case 'x-axis',     p1(2) = 0;
+            end
+
+            obj.createDataTips(p0,p1);
+            obj.clearPreview();
+            obj.IsDown = false; obj.ConstraintMode='free';
+
+            if isgraphics(obj.GUIFig), obj.refreshTable(); end
+        end
+    end
+
+    %% --------------- Build tips ----------------
+    methods (Access=private)
+        function createDataTips(obj, p0, p1)
+            kids = findobj(obj.Ax,'Type','line');
+            newCount = 0;
+
+            if strcmp(obj.ConstraintMode,'x-axis')
+                xr = sort([p0(1),p1(1)]);
+                for k=1:numel(kids)
+                    ln = kids(k); if ~strcmp(get(ln,'Visible'),'on'), continue; end
+                    X = get(ln,'XData'); Y = get(ln,'YData');
+                    nm = obj.lineNameFor(ln,k);
+                    for i=1:numel(X)-1
+                        x1=X(i); y1=Y(i); x2=X(i+1); y2=Y(i+1);
+                        if (y1<=0 && y2>=0) || (y1>=0 && y2<=0)
+                            if y2~=y1
+                                xC = x1 + (0-y1)*(x2-x1)/(y2-y1);
+                                if xC>=xr(1) && xC<=xr(2)
+                                    obj.addSnappedTip(ln,[xC 0],nm); newCount=newCount+1;
+                                end
+                            end
+                        end
+                    end
+                end
+            else
+                for k=1:numel(kids)
+                    ln = kids(k); if ~strcmp(get(ln,'Visible'),'on'), continue; end
+                    X = get(ln,'XData'); Y = get(ln,'YData');
+                    nm = obj.lineNameFor(ln,k);
+                    for i=1:numel(X)-1
+                        [hit,pt] = obj.lineIntersect(p0,p1,[X(i) Y(i)],[X(i+1) Y(i+1)]);
+                        if hit, obj.addSnappedTip(ln,pt,nm); newCount=newCount+1; end
+                    end
+                end
+            end
+
+            if newCount>0, fprintf('Created %d datatip(s)\n',newCount); end
+        end
+
+        function addSnappedTip(obj, hLine, pt, lineName)
+            X = get(hLine,'XData'); Y = get(hLine,'YData');
+            if isempty(X)||isempty(Y), return; end
+            d2 = (X-pt(1)).^2 + (Y-pt(2)).^2;
+            [~, idx] = min(d2);
+            xi = X(idx); yi = Y(idx);
+
+            hdt = [];
+            try, hdt = datatip(hLine, xi, yi); catch, end
+
+            obj.Tips(end+1) = struct('hLine',hLine,'lineName',lineName,'idx',idx,'x',xi,'y',yi,'hDT',hdt);
+        end
+
+        function name = lineNameFor(~, ln, k)
+            name = get(ln,'DisplayName'); if isempty(name), name=sprintf('Line_%d',k); end
+        end
+    end
+
+    %% --------------- Aligner table logic ----------------
+    methods (Access=private)
+        function refreshTable(obj)
+            % Drop tips whose lines no longer exist
+            keep = true(1,numel(obj.Tips));
+            for i=1:numel(obj.Tips)
+                if ~isgraphics(obj.Tips(i).hLine), keep(i)=false; end
+            end
+            obj.Tips = obj.Tips(keep);
+
+            if ~isempty(obj.UITable) && isgraphics(obj.UITable)
+                n = numel(obj.Tips);
+                rows = cell(n,5);
+                for i=1:n
+                    rows{i,1} = obj.Tips(i).lineName;   % Signal Name
+                    rows{i,2} = obj.Tips(i).x;          % X (display only)
+                    rows{i,3} = false;                   % X checkbox
+                    rows{i,4} = obj.Tips(i).y;          % Y (display only)
+                    rows{i,5} = false;                   % Y checkbox
+                end
+                set(obj.UITable,'Data',rows);
+            end
+
+            % Clear pending selections
+            obj.PendingXRow = [];
+            obj.PendingYRow = [];
+        end
+
+        function onTableEdit(obj, evt)
+            % evt.Source is the uitable handle in all supported releases
+            src = evt.Source;
+            if isempty(evt) || ~isfield(evt,'Indices') || isempty(evt.Indices), return; end
+            r = evt.Indices(1);
+            c = evt.Indices(2);
+
+            % Current table data
+            data = get(src,'Data');
+
+            % Robust boolean for checkboxes:
+            if isfield(evt,'NewData')
+                val = logical(evt.NewData);
+            elseif isfield(evt,'EditData')
+                % Older releases pass 'true'/'false' strings
+                ed = evt.EditData;
+                if ischar(ed) || isstring(ed)
+                    val = any(strcmpi(string(ed), ["true","1","on"]));
+                else
+                    val = logical(ed);
+                end
+            else
+                % Fallback: read the cell that was just changed
+                val = logical(data{r,c});
+            end
+
+            switch c
+                case 3  % X checkbox column
+                    obj.handleAxisCheck('x', r, val, data, src);
+                case 5  % Y checkbox column
+                    obj.handleAxisCheck('y', r, val, data, src);
+                otherwise
+                    % ignore edits to numeric display columns
+            end
+        end
+
+        function handleAxisCheck(obj, axisChar, row, val, data, src)
+            % Turned OFF -> just clear pending if this row was first
+            if ~val
+                if axisChar=='x' && ~isempty(obj.PendingXRow) && obj.PendingXRow==row
+                    obj.PendingXRow = [];
+                elseif axisChar=='y' && ~isempty(obj.PendingYRow) && obj.PendingYRow==row
+                    obj.PendingYRow = [];
+                end
+                return;
+            end
+
+            % Turned ON
+            switch axisChar
+                case 'x'
+                    if isempty(obj.PendingXRow)
+                        % First selection (mover)
+                        obj.PendingXRow = row;
+                    else
+                        mover  = obj.PendingXRow;
+                        target = row;
+                        % Prevent self-align and identical rows
+                        if mover ~= target
+                            obj.alignRows('x', mover, target);
+                        end
+                        % Uncheck both boxes in the UI
+                        if mover>=1 && mover<=size(data,1), data{mover,3} = false; end
+                        if target>=1 && target<=size(data,1), data{target,3} = false; end
+                        set(src,'Data',data);
+                        obj.PendingXRow = [];
+                    end
+
+                case 'y'
+                    if isempty(obj.PendingYRow)
+                        obj.PendingYRow = row;
+                    else
+                        mover  = obj.PendingYRow;
+                        target = row;
+                        if mover ~= target
+                            obj.alignRows('y', mover, target);
+                        end
+                        if mover>=1 && mover<=size(data,1), data{mover,5} = false; end
+                        if target>=1 && target<=size(data,1), data{target,5} = false; end
+                        set(src,'Data',data);
+                        obj.PendingYRow = [];
+                    end
+            end
+        end
+
+        function alignRows(obj, axisChar, moverRow, targetRow)
+            % Bounds check
+            if moverRow<1 || moverRow>numel(obj.Tips) || targetRow<1 || targetRow>numel(obj.Tips)
+                return;
+            end
+            s1 = obj.Tips(moverRow);   % mover
+            s2 = obj.Tips(targetRow);  % target
+
+            % No-op if same curve
+            if s1.hLine == s2.hLine, return; end
+
+            switch lower(axisChar)
+                case 'x'
+                    dx = s2.x - s1.x;
+                    try
+                        set(s1.hLine,'XData', get(s1.hLine,'XData') + dx);
+                    catch
+                        return; % line might have been deleted
+                    end
+                    % Update all tips on the moved line
+                    for i=1:numel(obj.Tips)
+                        if obj.Tips(i).hLine == s1.hLine
+                            obj.Tips(i).x = obj.Tips(i).x + dx;
+                        end
+                    end
+
+                case 'y'
+                    dy = s2.y - s1.y;
+                    try
+                        set(s1.hLine,'YData', get(s1.hLine,'YData') + dy);
+                    catch
+                        return;
+                    end
+                    for i=1:numel(obj.Tips)
+                        if obj.Tips(i).hLine == s1.hLine
+                            obj.Tips(i).y = obj.Tips(i).y + dy;
+                        end
+                    end
+            end
+
+            drawnow;           % show movement immediately
+            obj.refreshTable;  % refresh X/Y numbers and reset any stale checks
+        end
+    end
+
+    %% --------------- Helpers ----------------
+    methods (Access=private)
+        function tf = isFigureModeActive(obj)
+            tf = false;
+            try, z = zoom(obj.Fig);           if strcmpi(z.Enable,'on'), tf = true; return; end, end
+            try, p = pan(obj.Fig);            if strcmpi(p.Enable,'on'), tf = true; return; end, end
+            try, r = rotate3d(obj.Fig);       if strcmpi(r.Enable,'on'), tf = true; return; end, end
+            try, d = datacursormode(obj.Fig); if strcmpi(d.Enable,'on'), tf = true; return; end, end
+            try, b = brush(obj.Fig);          if strcmpi(b.Enable,'on'), tf = true; return; end, end
+        end
+
+        function clearPreview(obj)
+            if ~isempty(obj.PreviewLine) && isgraphics(obj.PreviewLine)
+                delete(obj.PreviewLine);
+            end
+            obj.PreviewLine = [];
+        end
+
+        function [hit, pt] = lineIntersect(~, p1, p2, p3, p4)
+            x1=p1(1); y1=p1(2); x2=p2(1); y2=p2(2);
+            x3=p3(1); y3=p3(2); x4=p4(1); y4=p4(2);
+            denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4);
+            if abs(denom) < 1e-12, hit=false; pt=[NaN NaN]; return; end
+            t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom;
+            u = -((x1-x2)*(y1-y3) - (y1-y2)*(x1-x3)) / denom;
+            if t>=0 && t<=1 && u>=0 && u<=1
+                pt = [x1 + t*(x2-x1), y1 + t*(y2-y1)];
+                hit = true;
+            else
+                hit=false; pt=[NaN NaN];
+            end
+        end
+    end
+end

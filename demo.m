@@ -1,10 +1,8 @@
 function demo()
 clc;
 fprintf('==========================================\n');
-fprintf('FINAL WORKING DATATIP TOOL DEMO\n');
+fprintf('Interactive Data Tip Tool\n');
 fprintf('==========================================\n');
-fprintf('This uses MOUSE BUTTONS instead of keyboard keys.\n');
-fprintf('Much more reliable across all MATLAB versions!\n\n');
 
 f = figure('Name','WORKING DataTip Tool - Use different mouse buttons!', ...
     'Position', [100 100 1000 700]);
@@ -43,9 +41,6 @@ fprintf('Try drawing lines that intersect these curves:\n\n');
 fprintf('1.  LEFT click + drag = Free line (any angle)\n');
 fprintf('2.  RIGHT click + drag = Horizontal line (will intersect at specific Y values)\n');
 fprintf('3.  MIDDLE click + drag = Vertical line (will intersect at specific X values)\n\n');
-fprintf('- Pro tip: Try drawing a horizontal line at y=0.5 using RIGHT click!\n');
-fprintf('- Pro tip: Try drawing a vertical line at x=π using MIDDLE click!\n\n');
-fprintf('Watch this console for real-time feedback.\n');
 fprintf('Close the figure when you''re done testing.\n\n');
 
 % Wait for figure to close
