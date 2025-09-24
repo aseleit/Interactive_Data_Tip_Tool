@@ -16,5 +16,5 @@ title(ax,'Draw lines to create datatips. Use the Aligner window to align.'); leg
 
 tool = InteractiveDataTipTool(ax);
 tool.setEnabled(true);
-tool.openAligner('Position',[1150 120 560 340]);
+tool.openAligner();
 end

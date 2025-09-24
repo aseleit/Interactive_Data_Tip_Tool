@@ -1,129 +1,143 @@
+>> DataTipResults
 # Interactive DataTip Tool
 
-Interactive Matlab tool to create DataTips on Matlab figures via Mouse and Keyboard prompts. 
+Interactive MATLAB tool to create and manage DataTips on figures using mouse-driven drawing and a standalone "DataTip Aligner" GUI for inspection and alignment.
 
 ## Features
 
- **Mouse button constraints** (no keyboard issues!)  
- **Ctrl modifier for x-axis datatips** at y=0  
- **Visual line preview** while dragging  
- **Automatic datatip creation** at intersections  
- **Workspace saving** to `DataTipResults` variable  
- **CSV export** with timestamps  
- **GUI integration** support  
+- Mouse-driven line drawing with constraint modes (free, horizontal, vertical)
+- Visual line preview while dragging and automatic datatip creation at intersections
+- Standalone "DataTip Aligner" GUI with a table listing created datatips
+   - Select checkboxes for signal operations
+   - Move X/Move Y checkboxes for alignment operations
+- Workspace saving to `DataTipResults` variable and timestamped CSV export
+- Easy GUI integration via `installMouseDataTipsFeature`
+- Enhanced move logging with signal names and movement descriptions
 
 ## Files Included
 
-- `InteractiveDataTipTool.m` - Main tool class
-- `installMouseDataTipsFeature.m` - Helper for GUI integration  
-- `final_working_demo.m` - Complete demo with test data
+- `InteractiveDataTipTool.m` - Main tool class (creates datatips and the DataTip Aligner GUI)
+- `installMouseDataTipsFeature.m` - Helper for GUIDE/App-Designer integration
+- `demo.m` / `demo_standalone.m` - Demo scripts (open the GUI and show usage)
 - `README.md` - This file
 
 ## Quick Start
 
 ```matlab
 % Add to path
-addpath('/path/to/final_datatip_tool')
+addpath('/path/to/Interactive_Data_Tip_Tool')
 
-% Run the demo
-final_working_demo
+% Run the demo (opens the figure and the DataTip Aligner GUI)
+demo
 ```
 
-## Mouse Controls
+## DataTip Aligner (Standalone GUI)
 
-| Input | Constraint | Line Color | Description |
-|-------|------------|------------|-------------|
-| **LEFT** click + drag | Free | Red | Line follows mouse exactly |
-| **RIGHT** click + drag | Horizontal | Orange | Y-coordinate locked to start point |
-| **MIDDLE** click + drag | Vertical | Blue | X-coordinate locked to start point |
-| **CTRL** + drag | X-axis only | Red | Creates datatips only at y=0 crossings |
+The DataTip Aligner window lists all created datatips in a table with these columns: 
+- **Select** - Checkbox to select signals for various operations
+- **Signal Name** - Name of the intersected line
+- **X** - X-coordinate of the data tip
+- **Move X** - Checkbox to select this tip for X-alignment
+- **Y** - Y-coordinate of the data tip  
+- **Move Y** - Checkbox to select this tip for Y-alignment
 
-### Mac Users
-- **Ctrl+Click** = Right-click
-- **Two-finger click** = Right-click  
-- **Three-finger click** or **Shift+Click** = Middle-click
+### Selection and Alignment Operations
 
-## Data Export
+- **Select All Button**: Click "Select All" to toggle selection of all signals at once
+- **Move X/Move Y Alignment**: Check Move X or Move Y boxes for exactly two tips to enable alignment operations. The first checked box becomes the mover, the second becomes the target. Same-curve selections result in no operation.
+- **Snap Selected**: Select signals using Select checkboxes, enter Target X/Y coordinates, then click "Snap Selected" to move all selected signals to that point
+- **Export Operations**: Use "Send Selected to WS" or "Save Selected to CSV" to work with only the selected signals
 
-### Workspace
-Results are automatically saved to the base workspace variable `DataTipResults`:
-```matlab
->> DataTipResults
-ans = 
-  struct array with fields:
-    x              % X-coordinate of datatip
-    y              % Y-coordinate of datatip  
-    line_name      % Name of the intersected line
-    constraint_mode % 'free', 'horizontal', or 'vertical'
-```
+### Move Log
 
-### CSV Export
-Each drawing session creates a timestamped CSV file in the current directory:
-- Format: `datatip_results_YYYY-MM-DD_HH-MM-SS.csv`
-- Contains: x, y, line_name, constraint_mode columns
-- Can be opened in Excel or other data analysis tools
+The Delta Log column displays detailed movement information in the format:
+"[Signal Name] moved +/-[value] on X-axis" or "[Signal Name] moved +/-[value] on Y-axis"
+
+This provides clear tracking of which signals were moved and by how much.
+
+### Button Functions
+
+- **Refresh**: Update the table and remove deleted data tips
+- **Reset**: Restore all modified lines to their original positions
+- **Send All to Workspace**: Export all results to MATLAB workspace variable "DataTipResults"
+- **Send Selected to WS**: Export only selected tips to workspace variable "SelectedDataTipResults"  
+- **Save All to CSV**: Export all data tips to a CSV file
+- **Save Selected to CSV**: Export only selected data tips to a CSV file
+- **Help**: Show comprehensive help dialog with README access
+
+Example: To align one signal tip to another signal tip, check both Move X boxes (first = mover, second = target) and the alignment will occur automatically.
 
 ## GUI Integration
 
 ### GUIDE-style GUIs
 ```matlab
 % In your GUI opening function:
-addpath('/path/to/final_datatip_tool')
-handles.dataTipTool = installMouseDataTipsFeature(handles.axes1, handles.chkDataTips);
+addpath('/path/to/Interactive_Data_Tip_Tool')
+handles.dataTipTool = installMouseDataTipsFeature(handles.axes1);
+% Optionally store a checkbox handle to toggle the feature
 guidata(hObject, handles);
 ```
 
 ### App Designer
-```matlab  
+```matlab
 % In startupFcn:
-addpath('/path/to/final_datatip_tool')
-app.DataTipTool = installMouseDataTipsFeature(app.UIAxes, app.DataTipsCheckBox);
+addpath('/path/to/Interactive_Data_Tip_Tool')
+app.DataTipTool = installMouseDataTipsFeature(app.UIAxes);
 ```
 
-### Manual Setup
+### Manual Setup (script)
 ```matlab
-% Create your figure and axes
 f = figure;
 ax = axes('Parent', f);
-plot(ax, 1:10, sin(1:10), 'b-');
+plot(ax, 1:100, sin(linspace(0,10,100)));
 
-% Add the tool
 tool = InteractiveDataTipTool(ax);
 tool.setEnabled(true);
+% Optional: open the standalone aligner GUI
+tool.openGUI();
 ```
 
-## Example Usage
+## Data Export
 
-1. **Run the demo**: `final_working_demo`
-2. **Try different mouse buttons**:
-   - Left-click + drag for free lines
-   - Right-click + drag for horizontal lines  
-   - Middle-click + drag for vertical lines
-3. **Check results**:
-   - Console shows real-time feedback
-   - Workspace variable `DataTipResults` contains all data
-   - CSV file created in current directory
+Results are saved to the base workspace variable `DataTipResults`:
 
-## Advantages Over Keyboard Version
+```matlab
+>> DataTipResults
+ans = 
+   struct array with fields:
+      SignalName     % Name of the intersected line
+      Index          % Index of the nearest vertex
+      X              % X-coordinate of datatip
+      Y              % Y-coordinate of datatip
+```
 
--  **100% reliable** - no keyboard event timing issues
--  **Cross-platform** - works on all MATLAB versions  
--  **No focus issues** - mouse events always work
--  **Visual feedback** - different colors for different modes
--  **Intuitive** - right-click for horizontal feels natural
+CSV export behavior:
+- Format: User-specified filename
+- Contains: SignalName, Index, X, Y columns
+- Supports both "Save All" and "Save Selected" operations
 
-## Requirements
+## Mouse Controls (summary)
 
-- MATLAB R2016b or later (for `datatip` function)
-- For older versions, falls back to console output
-- Works with both `figure` and `uifigure` (App Designer)
+| Input | Constraint | Notes |
+|-------|------------|-------|
+| Left click + drag | Free | Draw free line and create datatips at intersections |
+| Right click + drag | Horizontal | Y locked to start point |
+| Middle click + drag | Vertical | X locked to start point |
+| Ctrl+Click + drag | X-Axis Constrained | Creates datatips only at Y=0 crossings |
+
+## Example Workflow
+
+1. Launch the demo: `demo_standalone`
+2. Draw lines on the figure to create datatips at intersections
+3. Open the "DataTip Aligner" (opens automatically with the demo)
+4. Use Select checkboxes to choose signals for operations
+5. Use Move X/Move Y checkboxes for alignment (first = mover, second = target)
+6. Review detailed movement logs in the Delta Log column
+7. Export results using workspace or CSV export options
 
 ## Troubleshooting
 
-**Preview line not appearing**: Ensure you're clicking within the target axes area.
-
-**No datatips created**: Verify your drawn line actually intersects with visible line objects in the axes.
-
-**CSV export fails**: Check that you have write permissions in the current directory.
-
-**Mouse buttons not working**: Try the alternatives mentioned in the Mac Users section above.
+- If alignment operations don't work, ensure exactly two tips are selected with Move X or Move Y checkboxes
+- If values appear incorrect, press "Refresh" to update the table
+- Use "Reset" to restore all signals to their original positions
+- Select All button helps quickly select/deselect all signals for batch operations
